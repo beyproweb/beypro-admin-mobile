@@ -17,13 +17,19 @@ export function useCurrency() {
 export function CurrencyProvider({ children }: { children: ReactNode }) {
   const [currency, setCurrency] = useState<string>("₺");
 
-  const formatCurrency = (amount: number) =>
-    `${currency}${amount.toFixed(2)}`;
+  const formatCurrency = (amount: number) => {
+    // Ensure amount is a number, handle string inputs
+    const numAmount =
+      typeof amount === "string" ? parseFloat(amount) : Number(amount);
+    // Return a safe default if conversion fails
+    if (isNaN(numAmount)) {
+      return `${currency}0.00`;
+    }
+    return `${currency}${numAmount.toFixed(2)}`;
+  };
 
   return (
-    <CurrencyContext.Provider
-      value={{ currency, setCurrency, formatCurrency }}
-    >
+    <CurrencyContext.Provider value={{ currency, setCurrency, formatCurrency }}>
       {children}
     </CurrencyContext.Provider>
   );
