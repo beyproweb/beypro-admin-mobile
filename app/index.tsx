@@ -237,6 +237,7 @@ export default function Dashboard() {
       ]);
 
       setSummary(summaryData || null);
+      console.log("🔍 DEBUG: Summary response:", summaryData);
       setLowStockCount(Array.isArray(criticalStock) ? criticalStock.length : 0);
 
       const kitchenOrders = Array.isArray(kitchenData) ? kitchenData : [];
@@ -308,6 +309,7 @@ export default function Dashboard() {
       setCategoryBreakdown(normalized);
     } catch (err) {
       console.log("❌ Dashboard load error:", err);
+      console.log("❌ Error stack:", err instanceof Error ? err.stack : "no stack");
       const message =
         err instanceof Error ? err.message : "Failed to load dashboard data";
       setDashboardError(message);
