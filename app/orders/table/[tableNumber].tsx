@@ -3669,21 +3669,6 @@ const styles = StyleSheet.create({
   },
 
   /* MODAL HEADER BUTTON (Print) */
-  modalHeaderButton: {
-    padding: 10,
-    borderRadius: 8,
-    backgroundColor: "#4F46E5",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#4F46E5",
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-  modalHeaderButtonDark: {
-    backgroundColor: "#4F46E5",
-  },
   modalHeaderButtonDisabled: {
     opacity: 0.5,
   },
@@ -3996,26 +3981,27 @@ const styles = StyleSheet.create({
     color: "#DC2626",
     fontWeight: "600",
   },
-  refundAmountTextDark: {
-    color: "#FCA5A5",
-  },
+    refundAmountTextDark: {
+      color: "#FCA5A5",
+    },
+  
+    /* PRINT BUTTON STYLES */
+    modalHeaderButton: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      backgroundColor: "#2563EB",
+      borderRadius: 6,
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: 8,
+    },
+    modalHeaderButtonDark: {
+      backgroundColor: "#1E40AF",
+    },
+    modalHeaderButtonDisabled: {
+      backgroundColor: "#BFDBFE",
+      opacity: 0.6,
+    },
+  });
 
-  /* PRINT BUTTON STYLES */
-  modalHeaderButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "#2563EB",
-    borderRadius: 6,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  modalHeaderButtonDark: {
-    backgroundColor: "#1E40AF",
-  },
-  modalHeaderButtonDisabled: {
-    backgroundColor: "#BFDBFE",
-    opacity: 0.6,
-  },
-});
