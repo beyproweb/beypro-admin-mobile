@@ -1347,7 +1347,9 @@ export default function TableOrderScreen() {
                   </Text>
                 </View>
               </View>
-              <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+              <View
+                style={{ flexDirection: "row", gap: 8, alignItems: "center" }}
+              >
                 {/* Print Button - Only show if there's an active order */}
                 {activeOrder && (
                   <TouchableOpacity
@@ -3996,5 +3998,24 @@ const styles = StyleSheet.create({
   },
   refundAmountTextDark: {
     color: "#FCA5A5",
+  },
+
+  /* PRINT BUTTON STYLES */
+  modalHeaderButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#2563EB",
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  modalHeaderButtonDark: {
+    backgroundColor: "#1E40AF",
+  },
+  modalHeaderButtonDisabled: {
+    backgroundColor: "#BFDBFE",
+    opacity: 0.6,
   },
 });
