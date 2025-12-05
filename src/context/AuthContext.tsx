@@ -5,7 +5,7 @@ import React, {
   useEffect,
   ReactNode,
 } from "react";
-import * as SecureStore from "expo-secure-store";
+import { getItem, setItem, deleteItem } from "../utils/storage";
 import { router } from "expo-router";
 import { loginRequest, getMe } from "../api/auth.api";
 
@@ -33,7 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const token = await SecureStore.getItemAsync("token");
+        const token = await getItem("token");
         if (token) {
           const me = await getMe();
           setUser(me);
@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     const res = await loginRequest(email, password);
     if (res?.token) {
-      await SecureStore.setItemAsync("token", res.token);
+      await setItem("token", res.token);
       const me = await getMe();
       setUser(me);
       router.replace("/");
@@ -56,7 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-    await SecureStore.deleteItemAsync("token");
+    await deleteItem("token");
     setUser(null);
     router.replace("/login");
   };

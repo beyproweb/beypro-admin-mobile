@@ -1,0 +1,12 @@
+{
+  "version": "0.81.5",
+  "transformer": {
+    "minifierConfig": {
+      "keep_classnames": true,
+      "keep_fnames": true,
+      "mangle": {
+        "keep_fnames": true
+      }
+    }
+  }
+}

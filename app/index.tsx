@@ -21,8 +21,10 @@ import BottomNav from "../src/components/navigation/BottomNav";
 import { useAuth } from "../src/context/AuthContext";
 import { useAppearance } from "../src/context/AppearanceContext";
 import { useCurrency } from "../src/context/CurrencyContext";
+import { usePermissions } from "../src/context/PermissionsContext";
 import secureFetch from "../src/api/secureFetch";
 import RegisterModal from "../src/components/register/RegisterModal";
+import LiveIngredientPrices from "./ingredients/LiveIngredientPrices";
 
 type DashboardTab = {
   key: string;
@@ -32,6 +34,7 @@ type DashboardTab = {
   icon: string;
   background: string;
   backgroundDark: string;
+  permission?: string | string[];
 };
 
 const DASHBOARD_TABS: DashboardTab[] = [
@@ -43,6 +46,17 @@ const DASHBOARD_TABS: DashboardTab[] = [
     icon: "📋",
     background: "#0EA5E9",
     backgroundDark: "#0369A1",
+    permission: "orders",
+  },
+  {
+    key: "attendance",
+    label: "Check-In",
+    description: "Staff time clock",
+    route: "/staff/attendance",
+    icon: "⏱️",
+    background: "#14B8A6",
+    backgroundDark: "#0D9488",
+    permission: "staff",
   },
   {
     key: "stock",
@@ -52,6 +66,7 @@ const DASHBOARD_TABS: DashboardTab[] = [
     icon: "📊",
     background: "#22C55E",
     backgroundDark: "#15803D",
+    permission: "inventory",
   },
   {
     key: "reports",
@@ -61,6 +76,7 @@ const DASHBOARD_TABS: DashboardTab[] = [
     icon: "📈",
     background: "#F59E0B",
     backgroundDark: "#D97706",
+    permission: "reports",
   },
   {
     key: "expenses",
@@ -70,15 +86,7 @@ const DASHBOARD_TABS: DashboardTab[] = [
     icon: "💰",
     background: "#EF4444",
     backgroundDark: "#DC2626",
-  },
-  {
-    key: "products",
-    label: "Products",
-    description: "Manage items",
-    route: "/products",
-    icon: "📦",
-    background: "#8B5CF6",
-    backgroundDark: "#7C3AED",
+    permission: "reports",
   },
   {
     key: "notifications",
@@ -88,6 +96,7 @@ const DASHBOARD_TABS: DashboardTab[] = [
     icon: "🔔",
     background: "#EC4899",
     backgroundDark: "#DB2777",
+    permission: "settings",
   },
   {
     key: "register",
@@ -97,6 +106,7 @@ const DASHBOARD_TABS: DashboardTab[] = [
     icon: "🔐",
     background: "#06B6D4",
     backgroundDark: "#0891B2",
+    permission: "payments",
   },
   {
     key: "phone",
@@ -106,6 +116,107 @@ const DASHBOARD_TABS: DashboardTab[] = [
     icon: "☎️",
     background: "#10B981",
     backgroundDark: "#059669",
+    permission: "orders",
+  },
+  {
+    key: "tsb-history",
+    label: "TSB History",
+    description: "Table orders history",
+    route: "/orders/tsb-history",
+    icon: "📘",
+    background: "#6366F1",
+    backgroundDark: "#4F46E5",
+    permission: "orders",
+  },
+  {
+    key: "suppliers",
+    label: "Suppliers",
+    description: "Manage suppliers & orders",
+    route: "/suppliers",
+    icon: "🏪",
+    background: "#14B8A6",
+    backgroundDark: "#0D9488",
+    permission: "inventory",
+  },
+  {
+    key: "payroll",
+    label: "Payroll",
+    description: "Staff & payments",
+    route: "/staff",
+    icon: "👥",
+    background: "#8B5CF6",
+    backgroundDark: "#7C3AED",
+    permission: "staff",
+  },
+  {
+    key: "production",
+    label: "Production",
+    description: "Recipes & batches",
+    route: "/production",
+    icon: "🏭",
+    background: "#F59E0B",
+    backgroundDark: "#D97706",
+    permission: "products",
+  },
+  {
+    key: "tasks",
+    label: "Tasks",
+    description: "Team task hub",
+    route: "/tasks",
+    icon: "✅",
+    background: "#06B6D4",
+    backgroundDark: "#0891B2",
+    permission: ["orders", "staff"],
+  },
+  {
+    key: "qr-menu",
+    label: "QR Menu",
+    description: "QR ordering",
+    route: "/qr-menu",
+    icon: "📱",
+    background: "#EC4899",
+    backgroundDark: "#DB2777",
+    permission: "orders",
+  },
+  {
+    key: "ingredients",
+    label: "Ingredients",
+    description: "Ingredient inventory",
+    route: "/ingredients",
+    icon: "🥘",
+    background: "#F59E0B",
+    backgroundDark: "#D97706",
+    permission: ["inventory", "products"],
+  },
+  {
+    key: "marketing",
+    label: "Marketing",
+    description: "Email & WhatsApp campaigns",
+    route: "/marketing",
+    icon: "📢",
+    background: "#EC4899",
+    backgroundDark: "#DB2777",
+    permission: "marketing",
+  },
+  {
+    key: "customer-insights",
+    label: "Customers",
+    description: "Customer analytics",
+    route: "/insights/customer-insights",
+    icon: "👥",
+    background: "#3b82f6",
+    backgroundDark: "#1e40af",
+    permission: "customer",
+  },
+  {
+    key: "maintenance",
+    label: "Maintenance",
+    description: "Track & resolve issues",
+    route: "/maintenance",
+    icon: "🔧",
+    background: "#6B7280",
+    backgroundDark: "#4B5563",
+    permission: "maintenance",
   },
 ];
 
@@ -141,6 +252,7 @@ export default function Dashboard() {
   const { user, loading } = useAuth();
   const { appearance, isDark, fontScale } = useAppearance();
   const { formatCurrency } = useCurrency();
+  const { hasPermission } = usePermissions();
   const { t } = useTranslation();
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -165,18 +277,31 @@ export default function Dashboard() {
   const [registerModalVisible, setRegisterModalVisible] = useState(false);
   const [tabPage, setTabPage] = useState(0);
 
+  // Filter tabs by user permissions
+  const visibleTabs = DASHBOARD_TABS.filter((tab) => {
+    if (!tab.permission) return true; // No permission required
+    return hasPermission(tab.permission as any);
+  });
+
   const panResponderRef = useRef<any>(null);
 
   // Setup pan responder for swipe gestures
   useEffect(() => {
-    const totalPages = Math.ceil(DASHBOARD_TABS.length / 2);
+    const totalPages = Math.ceil(visibleTabs.length / 9);
 
     panResponderRef.current = PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      // Don't capture touches on start — allow child touchables to receive taps.
+      onStartShouldSetPanResponder: () => false,
+      // Only become responder for a horizontal swipe larger than a small threshold.
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        const x = Math.abs(gestureState.dx || 0);
+        const y = Math.abs(gestureState.dy || 0);
+        // only activate when horizontal movement dominates and passes threshold
+        return x > y && x > 10;
+      },
       onPanResponderRelease: (evt, gestureState) => {
-        const xDistance = Math.abs(gestureState.dx);
-        const yDistance = Math.abs(gestureState.dy);
+        const xDistance = Math.abs(gestureState.dx || 0);
+        const yDistance = Math.abs(gestureState.dy || 0);
 
         if (xDistance > yDistance && xDistance > 50) {
           setTabPage((prev) => {
@@ -191,7 +316,7 @@ export default function Dashboard() {
         }
       },
     });
-  }, [DASHBOARD_TABS.length]);
+  }, [visibleTabs.length]);
 
   const formatLabel = (value: string) => {
     const parsed = new Date(value);
@@ -436,8 +561,8 @@ export default function Dashboard() {
             style={styles.tabPaginationContainer}
             {...(panResponderRef.current?.panHandlers || {})}
           >
-            <View style={styles.tabsRow}>
-              {DASHBOARD_TABS.slice(tabPage * 2, tabPage * 2 + 2).map((tab) => {
+            <View style={styles.tabsGrid}>
+              {visibleTabs.slice(tabPage * 9, tabPage * 9 + 9).map((tab) => {
                 const backgroundColor = isDark
                   ? (tab.backgroundDark ?? tab.background)
                   : tab.background;
@@ -445,38 +570,43 @@ export default function Dashboard() {
                   <TouchableOpacity
                     key={tab.key}
                     style={[
-                      styles.tabCard,
+                      styles.quickTabCard,
                       { backgroundColor, shadowColor: backgroundColor },
                     ]}
-                    activeOpacity={0.9}
-                    onPress={() => router.push(tab.route as any)}
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      if (tab.key === "register") {
+                        setRegisterModalVisible(true);
+                      } else {
+                        router.push(tab.route as any);
+                      }
+                    }}
                   >
-                    <View style={styles.tabIconWrapper}>
-                      <Text
-                        style={[styles.tabIcon, { fontSize: 24 * fontScale }]}
-                      >
-                        {tab.icon}
-                      </Text>
-                    </View>
                     <Text
-                      style={[styles.tabLabel, { fontSize: 16 * fontScale }]}
+                      style={[
+                        styles.quickTabIcon,
+                        { fontSize: 28 * fontScale },
+                      ]}
                     >
-                      {t(tab.label)}
+                      {tab.icon}
                     </Text>
                     <Text
-                      style={[styles.tabDesc, { fontSize: 12 * fontScale }]}
+                      style={[
+                        styles.quickTabLabel,
+                        { fontSize: 13 * fontScale },
+                      ]}
                     >
-                      {t(tab.description)}
+                      {t(tab.label)}
                     </Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
 
-            {Math.ceil(DASHBOARD_TABS.length / 2) > 1 && (
+            {Math.ceil(visibleTabs.length / 9) > 1 && (
               <View style={styles.tabPaginationDots}>
                 {Array.from({
-                  length: Math.ceil(DASHBOARD_TABS.length / 2),
+                  length: Math.ceil(visibleTabs.length / 9),
                 }).map((_, index) => (
                   <TouchableOpacity
                     key={index}
@@ -749,6 +879,31 @@ export default function Dashboard() {
 
             <TouchableOpacity
               activeOpacity={0.9}
+              style={[styles.gridItem, isDark && styles.gridItemDark]}
+              onPress={() => router.push("/staff/attendance")}
+            >
+              <Text
+                style={[
+                  styles.gridItemTitle,
+                  isDark && styles.gridItemTitleDark,
+                  { fontSize: 16 * fontScale },
+                ]}
+              >
+                {t("Check In / Out")}
+              </Text>
+              <Text
+                style={[
+                  styles.gridItemDesc,
+                  isDark && styles.gridItemDescDark,
+                  { fontSize: 13 * fontScale },
+                ]}
+              >
+                {t("Staff time clock")}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.9}
               style={[styles.gridItem]}
               onPress={() => router.push("/finance/expenses")}
             >
@@ -957,6 +1112,45 @@ export default function Dashboard() {
             )}
           </View>
         </View>
+
+        {/* ===================== INGREDIENT PRICE PREVIEW ===================== */}
+        <View style={{ marginTop: 24, marginBottom: 8 }}>
+          <Text
+            style={{
+              fontWeight: "bold",
+              fontSize: 18 * fontScale,
+              color: isDark ? "#fff" : "#23283a",
+              marginBottom: 8,
+            }}
+          >
+            {t("Live Ingredient Prices")}
+          </Text>
+          <View
+            style={{
+              height: 220,
+              borderRadius: 12,
+              overflow: "hidden",
+              backgroundColor: isDark ? "#23283a" : "#f3f3f3",
+            }}
+          >
+            <LiveIngredientPrices compact maxItems={5} />
+          </View>
+          <TouchableOpacity
+            style={{
+              alignSelf: "flex-end",
+              marginTop: 4,
+              padding: 6,
+              paddingHorizontal: 12,
+              borderRadius: 16,
+              backgroundColor: "#F59E0B",
+            }}
+            onPress={() => router.push("/ingredients")}
+          >
+            <Text style={{ color: "#fff", fontWeight: "bold" }}>
+              {t("See all ingredients")}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
       <RegisterModal
@@ -1013,7 +1207,7 @@ const styles = StyleSheet.create({
   },
   logoSymbolDark: {
     color: "#38BDF8",
-    textShadowColor: "rgba(56, 189, 248, 0.5)",
+    textShadowColor: "rgba(56,189,248,0.5)",
   },
   logoText: {
     fontWeight: "900",
@@ -1026,7 +1220,7 @@ const styles = StyleSheet.create({
   },
   logoTextDark: {
     color: "#38BDF8",
-    textShadowColor: "rgba(56, 189, 248, 0.4)",
+    textShadowColor: "rgba(56,189,248,0.4)",
   },
   globalO: {
     color: "#10B981",
@@ -1198,8 +1392,18 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   tabPaginationContainer: {
-    alignItems: "center",
-    gap: 12,
+    alignItems: "stretch",
+    gap: 0,
+    paddingHorizontal: 0,
+  },
+  tabsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: 8,
+    width: "100%",
+    paddingVertical: 12,
+    paddingHorizontal: 0,
   },
   tabsRow: {
     flexDirection: "row",
@@ -1208,11 +1412,11 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   tabPaginationDots: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 8,
-  },
+    flexDirection: "row" as const,
+    justifyContent: "center" as const,
+    gap: 6,
+    paddingVertical: 6,
+  } as const,
   paginationDot: {
     width: 8,
     height: 8,
@@ -1236,51 +1440,81 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     color: "#EF4444",
   },
-  tabCard: {
-    flex: 1,
-    padding: 18,
-    borderRadius: 24,
+  quickTabCard: {
+    width: "31%",
+    aspectRatio: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 16,
     marginRight: 0,
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
-    borderWidth: 1.2,
-    borderColor: "rgba(255,255,255,0.4)",
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+    borderWidth: 0.8,
+    borderColor: "rgba(255,255,255,0.25)",
+    overflow: "hidden",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+  },
+  tabCard: {
+    flex: 0.48,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    marginRight: 0,
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.3)",
     overflow: "hidden",
     justifyContent: "space-between",
-    minHeight: 180,
+    minHeight: 140,
   },
   tabIconWrapper: {
-    width: 50,
-    height: 50,
-    borderRadius: 16,
+    width: 42,
+    height: 42,
+    borderRadius: 12,
     backgroundColor: "rgba(255,255,255,0.5)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 14,
-    shadowOpacity: 0.2,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
+    marginBottom: 8,
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.6)",
+    borderColor: "rgba(255,255,255,0.5)",
   },
   tabIcon: {
     color: "#FFF",
   },
-  tabLabel: {
-    fontWeight: "900",
+  quickTabIcon: {
     color: "#FFFFFF",
+    textAlign: "center",
+  },
+  quickTabLabel: {
+    fontWeight: "700",
+    color: "#FFFFFF",
+    fontSize: 13,
+    textAlign: "center",
     letterSpacing: -0.3,
-    fontSize: 15,
+  },
+  tabLabel: {
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
+    fontSize: 13,
   },
   tabDesc: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "rgba(255,255,255,0.85)",
+    marginTop: 4,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.8)",
     fontWeight: "500",
-    lineHeight: 16,
+    lineHeight: 14,
   },
 
   /* KPI CARDS */

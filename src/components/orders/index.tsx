@@ -1,14 +1,38 @@
 // app/orders/index.tsx
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
 import { router } from "expo-router";
+import { useAppearance } from "../../context/AppearanceContext";
 
 export default function OrdersIndex() {
+  const { isDark, fontScale } = useAppearance();
+
   return (
-    <View style={styles.container}>
+    <View
+      style={[
+        styles.container,
+        isDark && styles.containerDark,
+      ]}
+    >
       {/* HEADER */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Orders</Text>
-        <Text style={styles.headerSubtitle}>Select an order category</Text>
+      <View style={[styles.header, isDark && styles.headerDark]}>
+        <Text
+          style={[
+            styles.headerTitle,
+            isDark && styles.headerTitleDark,
+            { fontSize: 26 * fontScale },
+          ]}
+        >
+          Orders
+        </Text>
+        <Text
+          style={[
+            styles.headerSubtitle,
+            isDark && styles.headerSubtitleDark,
+            { fontSize: 14 * fontScale },
+          ]}
+        >
+          Select an order category
+        </Text>
       </View>
 
       {/* CONTENT */}
@@ -19,8 +43,22 @@ export default function OrdersIndex() {
           onPress={() => router.push("/orders/tables")}
         >
           <View>
-            <Text style={styles.cardTitle}>Dine-In Tables</Text>
-            <Text style={styles.cardDesc}>Active table orders</Text>
+            <Text
+              style={[
+                styles.cardTitle,
+                { fontSize: 18 * fontScale },
+              ]}
+            >
+              Dine-In Tables
+            </Text>
+            <Text
+              style={[
+                styles.cardDesc,
+                { fontSize: 14 * fontScale },
+              ]}
+            >
+              Active table orders
+            </Text>
           </View>
         </TouchableOpacity>
 
@@ -30,19 +68,22 @@ export default function OrdersIndex() {
           onPress={() => router.push("/orders/takeaway")}
         >
           <View>
-            <Text style={styles.cardTitle}>Takeaway</Text>
-            <Text style={styles.cardDesc}>Pickup orders overview</Text>
-          </View>
-        </TouchableOpacity>
-
-        {/* ---------- DELIVERY ---------- */}
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => router.push("/orders/phone")}
-        >
-          <View>
-            <Text style={styles.cardTitle}>Delivery</Text>
-            <Text style={styles.cardDesc}>Phone delivery orders</Text>
+            <Text
+              style={[
+                styles.cardTitle,
+                { fontSize: 18 * fontScale },
+              ]}
+            >
+              Takeaway
+            </Text>
+            <Text
+              style={[
+                styles.cardDesc,
+                { fontSize: 14 * fontScale },
+              ]}
+            >
+              Pickup orders overview
+            </Text>
           </View>
         </TouchableOpacity>
 
@@ -52,8 +93,22 @@ export default function OrdersIndex() {
           onPress={() => router.push("/orders/packet")}
         >
           <View>
-            <Text style={styles.cardTitle}>Packet Orders</Text>
-            <Text style={styles.cardDesc}>Bagged / packaged orders</Text>
+            <Text
+              style={[
+                styles.cardTitle,
+                { fontSize: 18 * fontScale },
+              ]}
+            >
+              Packet Orders
+            </Text>
+            <Text
+              style={[
+                styles.cardDesc,
+                { fontSize: 14 * fontScale },
+              ]}
+            >
+              Bagged / packaged orders
+            </Text>
           </View>
         </TouchableOpacity>
 
@@ -63,8 +118,22 @@ export default function OrdersIndex() {
           onPress={() => router.push("/orders/kitchen")}
         >
           <View>
-            <Text style={styles.cardTitle}>Kitchen</Text>
-            <Text style={styles.cardDesc}>Live preparation queue</Text>
+            <Text
+              style={[
+                styles.cardTitle,
+                { fontSize: 18 * fontScale },
+              ]}
+            >
+              Kitchen
+            </Text>
+            <Text
+              style={[
+                styles.cardDesc,
+                { fontSize: 14 * fontScale },
+              ]}
+            >
+              Live preparation queue
+            </Text>
           </View>
         </TouchableOpacity>
 
@@ -74,8 +143,22 @@ export default function OrdersIndex() {
           onPress={() => router.push("/orders/history")}
         >
           <View>
-            <Text style={styles.cardTitle}>History</Text>
-            <Text style={styles.cardDesc}>Completed orders & payments</Text>
+            <Text
+              style={[
+                styles.cardTitle,
+                { fontSize: 18 * fontScale },
+              ]}
+            >
+              History
+            </Text>
+            <Text
+              style={[
+                styles.cardDesc,
+                { fontSize: 14 * fontScale },
+              ]}
+            >
+              Completed orders & payments
+            </Text>
           </View>
         </TouchableOpacity>
       </ScrollView>
@@ -92,6 +175,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F4F5F7",
   },
+  containerDark: {
+    backgroundColor: "#020617",
+  },
 
   header: {
     paddingTop: 60,
@@ -101,17 +187,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: "#E5E7EB",
   },
+  headerDark: {
+    backgroundColor: "#020617",
+    borderColor: "#1F2937",
+  },
 
   headerTitle: {
     fontSize: 26,
     fontWeight: "700",
     color: "#111827",
   },
+  headerTitleDark: {
+    color: "#F9FAFB",
+  },
 
   headerSubtitle: {
     marginTop: 4,
     fontSize: 14,
     color: "#6B7280",
+  },
+  headerSubtitleDark: {
+    color: "#9CA3AF",
   },
 
   content: {
@@ -142,4 +238,3 @@ const styles = StyleSheet.create({
     color: "#6B7280",
   },
 });
-

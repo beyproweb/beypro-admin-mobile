@@ -6,6 +6,7 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from "react-native";
 import { useState } from "react";
 import { useAuth } from "../src/context/AuthContext";
@@ -33,50 +34,57 @@ export default function LoginScreen() {
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={styles.container}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 40}
     >
-      <View style={styles.inner}>
-        {/* LOGO TEXT */}
-        <Text style={styles.brand}>BEYPRO</Text>
-        <Text style={styles.subtitle}>Admin Access</Text>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.inner}>
+          {/* LOGO TEXT */}
+          <Text style={styles.brand}>BEYPRO</Text>
+          <Text style={styles.subtitle}>Admin Access</Text>
 
-        {/* CARD */}
-        <View style={styles.card}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="admin@yourstore.com"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            onChangeText={setEmail}
-            value={email}
-            placeholderTextColor="#9CA3AF"
-          />
+          {/* CARD */}
+          <View style={styles.card}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="admin@yourstore.com"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              onChangeText={setEmail}
+              value={email}
+              placeholderTextColor="#9CA3AF"
+            />
 
-          <Text style={[styles.label, { marginTop: 18 }]}>Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="••••••••"
-            secureTextEntry
-            onChangeText={setPassword}
-            value={password}
-            placeholderTextColor="#9CA3AF"
-          />
+            <Text style={[styles.label, { marginTop: 18 }]}>Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="••••••••"
+              secureTextEntry
+              onChangeText={setPassword}
+              value={password}
+              placeholderTextColor="#9CA3AF"
+            />
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          <Pressable
-            style={[styles.button, loading && { opacity: 0.6 }]}
-            onPress={handleLogin}
-            disabled={loading}
-          >
-            <Text style={styles.buttonText}>
-              {loading ? "Signing in..." : "Sign In"}
-            </Text>
-          </Pressable>
+            <Pressable
+              style={[styles.button, loading && { opacity: 0.6 }]}
+              onPress={handleLogin}
+              disabled={loading}
+            >
+              <Text style={styles.buttonText}>
+                {loading ? "Signing in..." : "Sign In"}
+              </Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.footer}>© Beypro • Professional POS System</Text>
         </View>
-
-        <Text style={styles.footer}>© Beypro • Professional POS System</Text>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -85,11 +93,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F7F8FA",
+  },
+
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: "center",
+    paddingVertical: 40,
   },
 
   inner: {
     paddingHorizontal: 28,
+    width: "100%",
+    alignItems: "stretch",
   },
 
   brand: {

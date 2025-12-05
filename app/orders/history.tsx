@@ -1,358 +1,1690 @@
 // app/orders/history.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
+  TextInput,
+  ActivityIndicator,
+  FlatList,
+  Alert,
   Modal,
-  Pressable,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { useRouter } from "expo-router";
 import api from "../../src/api/axiosClient";
+import BottomNav from "../../src/components/navigation/BottomNav";
+import { useAppearance } from "../../src/context/AppearanceContext";
 
-/* ================================
-   TYPES
-=================================*/
-type PaymentMethod =
-  | "cash"
-  | "card"
-  | "yemeksepeti"
-  | "getir"
-  | "trendyol"
-  | "multinet"
-  | "sodexo"
-  | "metropol"
-  | "other";
-
-interface OrderHistoryItem {
+type OrderItem = {
   id: number;
-  total: number;
-  created_at: string;
-  order_type: "table" | "phone" | "packet" | "takeaway";
+  product_name: string;
+  price: number;
+  quantity: number;
+  paid_at?: string | null;
+  paid?: boolean;
+  payment_method?: string | null;
+};
+
+type PaymentRecord = {
+  id: number;
+  payment_method: string;
+  amount: number;
+  timestamp?: string;
+  created_at?: string;
+  previous_payment_method?: string; // Track what payment changed from
+};
+
+type HistoryOrder = {
+  id: number;
   table_number?: number | null;
   customer_name?: string | null;
-  payment_method: PaymentMethod | null;
-}
+  total: number;
+  status: string;
+  created_at: string;
+  updated_at?: string;
+  items?: OrderItem[];
+  payments?: PaymentRecord[];
+  payment_method?: string | null;
+};
 
-/* ================================
-   COMPONENT
-=================================*/
+type PaymentMethodItem = {
+  id: number;
+  label: string;
+};
+
+// Helper function to format date as YYYY-MM-DD
+const formatDateToString = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
 
 export default function OrderHistoryScreen() {
-  const [orders, setOrders] = useState<OrderHistoryItem[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const { isDark } = useAppearance();
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [orders, setOrders] = useState<HistoryOrder[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>([]);
+  
+  // Get today's date on initial load
+  const today = new Date();
+  
+  // Filters - with today's date as default
+  const [fromDate, setFromDate] = useState(formatDateToString(today));
+  const [toDate, setToDate] = useState(formatDateToString(today));
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showCancellationsOnly, setShowCancellationsOnly] = useState(false);
+  
+  // Payment editing - for individual items
+  const [editingItemKey, setEditingItemKey] = useState<string | null>(null);
+  const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
+  const [paymentDropdownOpen, setPaymentDropdownOpen] = useState(false);
 
-  const [visible, setVisible] = useState<boolean>(false);
-  const [currentOrder, setCurrentOrder] = useState<OrderHistoryItem | null>(null);
+  // Date picker state
+  const [showFromDatePicker, setShowFromDatePicker] = useState(false);
+  const [showToDatePicker, setShowToDatePicker] = useState(false);
 
-  /* -------------------------------
-     Fetch Data
-  --------------------------------*/
-  const loadHistory = async () => {
+  // Load payment methods
+  useEffect(() => {
+    const loadPaymentMethods = async () => {
+      try {
+        const res = await api.get("/settings/payments");
+        
+        // ✅ Use normalization to deduplicate and filter cross-tenant methods
+        const normalized = normalizePaymentMethods(res.data);
+        setPaymentMethods(normalized);
+      } catch (err) {
+        setPaymentMethods(getDefaultPaymentMethods());
+      }
+    };
+    loadPaymentMethods();
+  }, []);
+
+  const getDefaultPaymentMethods = (): PaymentMethodItem[] => [
+    { id: 1, label: "Cash" },
+    { id: 2, label: "Credit Card" },
+    { id: 3, label: "Debit Card" },
+    { id: 4, label: "Online Transfer" },
+  ];
+
+  // ✅ Normalize and deduplicate payment methods (same logic as web version)
+  const normalizePaymentMethods = (raw: any): PaymentMethodItem[] => {
+    const seen = new Set<string>();
+    const normalized: PaymentMethodItem[] = [];
+
+    // Process input data
+    let inputMethods: any[] = [];
+    if (Array.isArray(raw)) {
+      inputMethods = raw;
+    } else if (typeof raw === "object" && raw !== null) {
+      if (Array.isArray(raw.methods)) {
+        inputMethods = raw.methods;
+      } else if (typeof raw.enabledMethods === "object") {
+        inputMethods = Object.entries(raw.enabledMethods).map(([key, enabled]) => ({
+          id: key,
+          label: key,
+          enabled,
+        }));
+      }
+    }
+
+    // Add input methods (with deduplication and enabled check)
+    inputMethods.forEach((method: any) => {
+      if (!method || !method.label) return;
+      
+      // ✅ FILTER: Only include enabled payment methods (same as web version)
+      if (method.enabled === false) {
+        return;
+      }
+      
+      const label = String(method.label).toLowerCase().trim();
+      if (!seen.has(label)) {
+        seen.add(label);
+        normalized.push({
+          id: method.id || Math.random(),
+          label: method.label,
+        });
+      }
+    });
+
+    // ✅ NO DEFAULTS - Only show payment methods configured in settings
+    // (do NOT add default methods here)
+
+    return normalized;
+  };
+
+  // Load order history
+  const loadOrderHistory = async (from: string, to: string) => {
     try {
       setLoading(true);
-      const res = await api.get("/orders?status=completed");
-      setOrders(res.data || []);
-    } catch (err) {
-      console.log("❌ Load history error:", err);
+      
+      const historyRes = await api.get<HistoryOrder[]>(`/reports/history`, {
+        params: {
+          from: from || undefined,
+          to: to || undefined,
+        },
+      });
+      
+      const historyOrders = Array.isArray(historyRes.data) ? historyRes.data : [];
+
+      if (historyOrders.length === 0) {
+        setOrders([]);
+        setLoading(false);
+        return;
+      }
+
+      // Enrich with items and payments
+      const enriched = await Promise.all(
+        historyOrders.map(async (order) => {
+          try {
+            const itemsRes = await api.get<OrderItem[]>(`/orders/${order.id}/items`);
+            const items = Array.isArray(itemsRes.data) ? itemsRes.data : [];
+            
+            let payments: PaymentRecord[] = [];
+            try {
+              const paymentsRes = await api.get<PaymentRecord[]>(`/orders/${order.id}/payments`);
+              payments = Array.isArray(paymentsRes.data) ? paymentsRes.data : [];
+            } catch (e) {
+              payments = [];
+            }
+            
+            return { ...order, items, payments };
+          } catch (e) {
+            return { ...order, items: [], payments: [] };
+          }
+        })
+      );
+
+      setOrders(enriched);
+
+      // ✅ Tenant-safe extraction of payment methods actually used in these orders
+      try {
+        const extractedSet = new Set<string>();
+        enriched.forEach(order => {
+          if (order.payment_method && typeof order.payment_method === 'string') {
+            extractedSet.add(order.payment_method.trim());
+          }
+          if (Array.isArray(order.payments)) {
+            order.payments.forEach(p => {
+              if (p && typeof p.payment_method === 'string' && p.payment_method.trim()) {
+                extractedSet.add(p.payment_method.trim());
+              }
+            });
+          }
+        });
+
+        const extractedArray: PaymentMethodItem[] = Array.from(extractedSet).map((label, idx) => ({
+          id: idx + 1000, // offset to avoid clashing with defaults
+          label,
+        }));
+
+        // Merge with defaults (keep defaults first, avoid duplicates case-insensitive)
+        const defaults = getDefaultPaymentMethods();
+        const finalMethods: PaymentMethodItem[] = [
+          ...defaults,
+          ...extractedArray.filter(m => !defaults.some(d => d.label.toLowerCase() === m.label.toLowerCase()))
+        ];
+
+        // If we already loaded settings-based methods, only override with tenant-safe list
+        // if there is at least one extracted method (ensures we don't wipe out UI if empty)
+        if (extractedArray.length > 0) {
+          setPaymentMethods(finalMethods);
+        }
+      } catch (extractionErr) {
+        // Payment method extraction failed, keeping current list
+      }
+    } catch (err: any) {
+      const errMsg = `❌ ${err?.response?.status || "Error"}: ${err?.response?.data?.error || err?.message || "Unknown error"}`;
+      setOrders([]);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadHistory();
-  }, []);
+    loadOrderHistory(fromDate, toDate);
+  }, [fromDate, toDate]);
 
-  /* -------------------------------
-     Update Payment Method
-  --------------------------------*/
-  const updatePayment = async (method: PaymentMethod) => {
-    if (!currentOrder) return;
+  // Filter orders
+  const filteredOrders = useMemo(() => {
+    let result = [...orders];
 
-    try {
-      await api.put(`/orders/${currentOrder.id}/payment-method`, {
-        payment_method: method,
+    if (showCancellationsOnly) {
+      result = result.filter((o) => o.status === "cancelled");
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((o) => {
+        const customerMatch = String(o.customer_name || "").toLowerCase().includes(q);
+        const tableMatch = String(o.table_number || "").includes(q);
+        const orderIdMatch = String(o.id).includes(q);
+        return customerMatch || tableMatch || orderIdMatch;
       });
+    }
 
-      setVisible(false);
-      setCurrentOrder(null);
-      loadHistory();
-    } catch (err) {
-      console.log("❌ Payment update failed:", err);
+    return result;
+  }, [orders, showCancellationsOnly, searchQuery]);
+
+  // Group by date
+  const groupedOrders = useMemo(() => {
+    return filteredOrders.reduce((acc, order) => {
+      const dateKey = order.created_at
+        ? new Date(order.created_at).toLocaleDateString()
+        : "Unknown";
+      if (!acc[dateKey]) acc[dateKey] = [];
+      acc[dateKey].push(order);
+      return acc;
+    }, {} as Record<string, HistoryOrder[]>);
+  }, [filteredOrders]);
+
+  // Quick date range helpers
+  const handleQuickDate = (days: number) => {
+    const now = new Date();
+    const from = new Date(now);
+    from.setDate(from.getDate() - days);
+    setFromDate(formatDateToString(from));
+    setToDate(formatDateToString(now));
+  };
+
+  // Date picker handlers
+  const handleFromDateChange = (event: any, selectedDate: any) => {
+    setShowFromDatePicker(false);
+    if (selectedDate) {
+      setFromDate(formatDateToString(selectedDate));
     }
   };
 
-  /* -------------------------------
-     Render Payment method label
-  --------------------------------*/
-  const formatPayment = (method: PaymentMethod | null) => {
-    if (!method) return "No Payment";
-    switch (method) {
-      case "cash":
-        return "Cash";
-      case "card":
-        return "Card";
-      case "yemeksepeti":
-        return "Yemeksepeti";
-      case "getir":
-        return "Getir";
-      case "trendyol":
-        return "Trendyol";
-      case "multinet":
-        return "Multinet";
-      case "sodexo":
-        return "Sodexo";
-      case "metropol":
-        return "Metropol";
+  const handleToDateChange = (event: any, selectedDate: any) => {
+    setShowToDatePicker(false);
+    if (selectedDate) {
+      setToDate(formatDateToString(selectedDate));
+    }
+  };
+
+  const handleUpdatePaymentMethod = async (orderId: number, itemId: number, paymentMethodId: string) => {
+    try {
+      // ✅ Get the actual payment method label from paymentMethods state
+      const selectedMethod = paymentMethods.find(m => String(m.id) === paymentMethodId);
+      const paymentLabel = selectedMethod?.label || paymentMethodId;
+
+      // Get the current (old) payment method for tracking the change
+      const orderToUpdate = orders.find(o => o.id === orderId);
+      const oldPaymentMethod = orderToUpdate?.payment_method || orderToUpdate?.payments?.[0]?.payment_method || 'Unknown';
+      
+      // ✅ Update order-level payment method (same as web version)
+      await api.put(`/orders/${orderId}`, {
+        payment_method: paymentLabel,
+      });
+      
+      // ✅ Immediately update the order in state for instant UI refresh
+      setOrders(prevOrders =>
+        prevOrders.map(o =>
+          o.id === orderId
+            ? {
+                ...o,
+                payment_method: paymentLabel,
+                // ✅ Also update payments array if it exists
+                payments: o.payments && o.payments.length > 0
+                  ? o.payments.map((p, idx) => ({
+                      ...p,
+                      payment_method: idx === 0 ? paymentLabel : p.payment_method,
+                      previous_payment_method: idx === 0 ? oldPaymentMethod : p.previous_payment_method
+                    }))
+                  : o.payments
+              }
+            : o
+        )
+      );
+      
+      Alert.alert("Success", "Payment method updated");
+      setEditingItemKey(null);
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.error || err?.message || "Failed to update";
+      Alert.alert("Error", errorMsg);
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "closed":
+        return "#10B981";
+      case "cancelled":
+        return "#EF4444";
+      case "confirmed":
+        return "#F59E0B";
       default:
-        return "Other";
+        return "#6B7280";
     }
   };
 
-  /* -------------------------------
-     RENDER
-  --------------------------------*/
+  // ✅ Get payment methods specific to a given order (from its payments and items)
+  const getOrderPaymentMethods = (orderId: number): PaymentMethodItem[] => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return getDefaultPaymentMethods();
+
+    const methods = new Set<string>();
+    const defaults = getDefaultPaymentMethods();
+
+    // Collect from order's payment_method field
+    if (order.payment_method && typeof order.payment_method === 'string') {
+      methods.add(order.payment_method.trim());
+    }
+
+    // Collect from payments records
+    if (Array.isArray(order.payments)) {
+      order.payments.forEach(p => {
+        if (p && typeof p.payment_method === 'string' && p.payment_method.trim()) {
+          methods.add(p.payment_method.trim());
+        }
+      });
+    }
+
+    // Collect from item payment_method fields
+    if (Array.isArray(order.items)) {
+      order.items.forEach(item => {
+        if (item && typeof item.payment_method === 'string' && item.payment_method.trim()) {
+          methods.add(item.payment_method.trim());
+        }
+      });
+    }
+
+    // Convert to array and merge with defaults
+    const extracted: PaymentMethodItem[] = Array.from(methods).map((label, idx) => ({
+      id: idx + 2000, // offset to avoid clashes
+      label,
+    }));
+
+    return [
+      ...defaults,
+      ...extracted.filter(m => !defaults.some(d => d.label.toLowerCase() === m.label.toLowerCase()))
+    ];
+  };
+
+  // ✅ Fetch fresh payment methods from cart/settings when modal opens
+  const fetchCartPaymentMethods = async (orderId: number) => {
+    try {
+      const res = await api.get("/settings/payments");
+      
+      // ✅ Handle different response structures
+      let methods: any[] = [];
+      
+      if (Array.isArray(res.data)) {
+        // Direct array response
+        methods = res.data;
+      } else if (typeof res.data === 'object' && res.data !== null) {
+        // Object with methods property
+        if (Array.isArray(res.data.methods)) {
+          methods = res.data.methods;
+        } else if (Array.isArray(res.data.payments)) {
+          methods = res.data.payments;
+        } else {
+          // Fallback: convert object entries to array
+          methods = Object.entries(res.data)
+            .filter(([_, v]) => v && typeof v === 'object')
+            .map(([key, value]: [string, any]) => ({
+              id: key,
+              label: value.label || key,
+              enabled: value.enabled !== false,
+            }));
+        }
+      }
+      
+      // ✅ Filter ONLY enabled methods (same as web version)
+      const enabledMethods = methods.filter(m => m.enabled !== false);
+      
+      // Normalize and deduplicate
+      const normalized = normalizePaymentMethods({ methods: enabledMethods });
+      
+      // ✅ NO MERGING with defaults - only show what's in settings
+      setPaymentMethods(normalized);
+    } catch (err) {
+      // Fallback: empty array (no defaults)
+      setPaymentMethods([]);
+    }
+  };
+
   return (
-    <View style={styles.container}>
-      {/* ----- HEADER ----- */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Order History</Text>
-        <Text style={styles.headerSubtitle}>Completed orders overview</Text>
-      </View>
-
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.wrapper}
-      >
-        {orders.length === 0 && !loading && (
-          <Text style={styles.empty}>No completed orders yet.</Text>
-        )}
-
-        {/* ----- ORDER CARDS ----- */}
-        {orders.map((order) => (
-          <TouchableOpacity
-            key={order.id}
-            onPress={() => {
-              setCurrentOrder(order);
-              setVisible(true);
-            }}
-            style={styles.orderCard}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.orderId}>Order #{order.id}</Text>
-
-              {/* ORDER TYPE */}
-              <Text style={styles.type}>
-                {order.order_type === "table" &&
-                  `Table ${order.table_number ?? "-"}`}
-                {order.order_type === "phone" && "Phone Delivery"}
-                {order.order_type === "packet" && "Packet Order"}
-                {order.order_type === "takeaway" && "Takeaway"}
-              </Text>
-
-              {/* TIME */}
-              <Text style={styles.time}>
-                {new Date(order.created_at).toLocaleString()}
-              </Text>
-
-              {/* PAYMENT */}
-              <Text style={styles.payment}>
-                Payment: {formatPayment(order.payment_method)}
-              </Text>
-            </View>
-
-            <Text style={styles.total}>₺{order.total}</Text>
+    <View style={[styles.container, isDark && styles.containerDark]}>
+      {/* Header */}
+      <View style={[styles.header, isDark && styles.headerDark]}>
+        <View style={styles.headerLeft}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Ionicons name="chevron-back" size={28} color={isDark ? "#818CF8" : "#6366F1"} />
           </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* ==========================
-          PAYMENT METHOD MODAL
-     ========================== */}
-      <Modal visible={visible} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Change Payment Method</Text>
-            <Text style={styles.modalSubtitle}>
-              Order #{currentOrder?.id}
+          <View>
+            <Text style={[styles.headerTitle, isDark && styles.headerTitleDark]}>Order History</Text>
+            <Text style={[styles.headerSubtitle, isDark && styles.headerSubtitleDark]}>
+              {filteredOrders.length} orders
             </Text>
-
-            {/* PAYMENT OPTIONS */}
-            {(
-              [
-                "cash",
-                "card",
-                "yemeksepeti",
-                "getir",
-                "trendyol",
-                "multinet",
-                "sodexo",
-                "metropol",
-                "other",
-              ] as PaymentMethod[]
-            ).map((method) => (
-              <Pressable
-                key={method}
-                style={styles.methodBtn}
-                onPress={() => updatePayment(method)}
-              >
-                <Text style={styles.methodText}>
-                  {formatPayment(method)}
-                </Text>
-              </Pressable>
-            ))}
-
-            <Pressable
-              style={styles.cancelBtn}
-              onPress={() => setVisible(false)}
-            >
-              <Text style={styles.cancelText}>Cancel</Text>
-            </Pressable>
           </View>
         </View>
-      </Modal>
+      </View>
+
+      {/* Search Bar */}
+      <View style={[styles.filterInput, isDark && styles.filterInputDark]}>
+        <Ionicons name="search" size={18} color={isDark ? "#9CA3AF" : "#6B7280"} />
+        <TextInput
+          style={[styles.filterTextInput, isDark && styles.filterTextInputDark]}
+          placeholder="Search name, table, order ID..."
+          placeholderTextColor={isDark ? "#6B7280" : "#9CA3AF"}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+      </View>
+
+      {/* Filter Buttons */}
+      <View style={styles.filtersRow}>
+        <TouchableOpacity
+          style={[styles.filterButton, showCancellationsOnly && styles.filterButtonActive]}
+          onPress={() => setShowCancellationsOnly(!showCancellationsOnly)}
+        >
+          <Text
+            style={[
+              styles.filterButtonText,
+              showCancellationsOnly && styles.filterButtonTextActive,
+            ]}
+          >
+            {showCancellationsOnly ? "✓ Cancelled" : "All Orders"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Date Filters */}
+      <View style={styles.dateFiltersRow}>
+        <View style={styles.dateFilterGroup}>
+          <Text style={[styles.dateLabel, isDark && styles.dateLabelDark]}>From</Text>
+          <TouchableOpacity
+            style={[styles.dateInput, isDark && styles.dateInputDark]}
+            onPress={() => setShowFromDatePicker(true)}
+          >
+            <Ionicons name="calendar" size={16} color={isDark ? "#9CA3AF" : "#6B7280"} />
+            <Text style={[styles.dateInputText, isDark && styles.dateInputTextDark]}>
+              {fromDate}
+            </Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.dateFilterGroup}>
+          <Text style={[styles.dateLabel, isDark && styles.dateLabelDark]}>To</Text>
+          <TouchableOpacity
+            style={[styles.dateInput, isDark && styles.dateInputDark]}
+            onPress={() => setShowToDatePicker(true)}
+          >
+            <Ionicons name="calendar" size={16} color={isDark ? "#9CA3AF" : "#6B7280"} />
+            <Text style={[styles.dateInputText, isDark && styles.dateInputTextDark]}>
+              {toDate}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Quick Date Range Buttons */}
+      <View style={styles.quickDateRow}>
+        <TouchableOpacity style={[styles.quickDateBtn, isDark && styles.quickDateBtnDark]} onPress={() => handleQuickDate(0)}>
+          <Text style={[styles.quickDateBtnText, isDark && styles.quickDateBtnTextDark]}>Today</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.quickDateBtn, isDark && styles.quickDateBtnDark]} onPress={() => handleQuickDate(7)}>
+          <Text style={[styles.quickDateBtnText, isDark && styles.quickDateBtnTextDark]}>7 days</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.quickDateBtn, isDark && styles.quickDateBtnDark]} onPress={() => handleQuickDate(30)}>
+          <Text style={[styles.quickDateBtnText, isDark && styles.quickDateBtnTextDark]}>30 days</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Order List */}
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color="#6366F1" />
+          <Text style={[styles.emptyText, isDark && styles.emptyTextDark]}>Loading...</Text>
+        </View>
+      ) : filteredOrders.length === 0 ? (
+        <View style={styles.centerContainer}>
+          <Text style={[styles.emptyText, isDark && styles.emptyTextDark]}>
+            No orders found
+          </Text>
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={styles.listContent}>
+          {Object.entries(groupedOrders).map(([dateKey, ordersForDate]) => (
+            <View key={dateKey} style={styles.dateGroupContainer}>
+              <Text style={[styles.dateGroupHeader, isDark && styles.dateGroupHeaderDark]}>
+                {dateKey}
+              </Text>
+              {ordersForDate.map((order) => (
+                <View
+                  key={order.id}
+                  style={[styles.orderCardModern, isDark && styles.orderCardModernDark]}
+                >
+                  <View style={styles.modernCardHeader}>
+                    <View style={styles.modernHeaderLeft}>
+                      <Text style={[styles.orderNumberModern, isDark && styles.orderNumberModernDark]}>#{order.id}</Text>
+                      <Text style={[styles.orderMetaModern, isDark && styles.orderMetaModernDark]}>
+                        {order.customer_name || (order.table_number ? `Table ${order.table_number}` : "")}
+                      </Text>
+                    </View>
+
+                    <View style={styles.modernHeaderRight}>
+                      <View style={[styles.statusChip, { backgroundColor: getStatusColor(order.status) }] }>
+                        <Text style={styles.statusChipText}>{order.status.charAt(0).toUpperCase() + order.status.slice(1)}</Text>
+                      </View>
+                      <Text style={[styles.totalAmountModern, isDark && styles.totalAmountModernDark]}>₺{(Number(order.total) || 0).toFixed(2)}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.modernCardBody}>
+                    <View style={styles.itemsListContainer}>
+                      {(order.items || []).map((it) => (
+                        <View key={`${order.id}-${it.id}`} style={[styles.itemRowWithEdit, isDark && styles.itemRowWithEditDark]}>
+                          <View style={styles.itemInfoSection}>
+                            <Text style={[styles.itemPillText]}>{it.product_name} ×{it.quantity}</Text>
+                            <Text style={[styles.itemPriceSmall, isDark && styles.itemPriceSmallDark]}>₺{(Number(it.price) * (it.quantity || 1) || 0).toFixed(2)}</Text>
+                          </View>
+                          {it.paid_at && (
+                            <TouchableOpacity
+                              style={[styles.itemEditPaymentBtn, isDark && styles.itemEditPaymentBtnDark]}
+                              onPress={() => {
+                                setEditingItemKey(`${order.id}-${it.id}`);
+                                setSelectedPaymentId(null);
+                                // ✅ Fetch fresh payment methods when modal opens
+                                fetchCartPaymentMethods(order.id);
+                              }}
+                            >
+                              <Ionicons name="pencil" size={14} color={isDark ? "#60A5FA" : "#4F46E5"} />
+                              <Text style={[styles.itemEditPaymentBtnText, isDark && styles.itemEditPaymentBtnTextDark]}>Edit</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      ))}
+                    </View>
+
+                    {order.payments && order.payments.length > 0 && (
+                      <View style={styles.paymentsRow}>
+                        {order.payments.map((p, i) => (
+                          <View key={i}>
+                            <View style={styles.paymentBadge}>
+                              <Text style={styles.paymentBadgeText}>{p.payment_method} • ₺{(Number(p.amount)||0).toFixed(2)}</Text>
+                            </View>
+                            {/* ✅ Show payment change transition - MORE NOTICEABLE */}
+                            {p.previous_payment_method && p.created_at && (
+                              <View style={[styles.paymentChangeLogContainer, isDark && styles.paymentChangeLogContainerDark]}>
+                                <Text style={[styles.paymentChangeLog, isDark && styles.paymentChangeLogDark]}>
+                                  🔄 {p.previous_payment_method} → {p.payment_method}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                    {(!order.payments || order.payments.length === 0) && order.payment_method && (
+                      <View style={styles.paymentsRow}>
+                        <View style={styles.paymentBadge}>
+                          <Text style={styles.paymentBadgeText}>{order.payment_method}</Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.modernCardFooter}>
+                    <Text style={[styles.orderTimeText, isDark && styles.orderTimeTextDark]}>
+                      {new Date(order.created_at).toLocaleTimeString()}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ))}
+        </ScrollView>
+      )}
+
+      {/* Edit Item Payment Method Modal */}
+      {editingItemKey !== null && (
+        <Modal
+          visible={editingItemKey !== null}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setEditingItemKey(null)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, isDark && styles.modalContentDark]}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, isDark && styles.modalTitleDark]}>
+                  Change Payment Method
+                </Text>
+                <TouchableOpacity onPress={() => setEditingItemKey(null)}>
+                  <Ionicons name="close" size={24} color={isDark ? "#9CA3AF" : "#6B7280"} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.modalSubtitle, isDark && styles.modalSubtitleDark]}>
+                Order #{editingItemKey?.split('-')[0]}
+              </Text>
+
+              {paymentMethods.length === 0 ? (
+                <View style={styles.loadingPaymentMethods}>
+                  <ActivityIndicator size="small" color="#6366F1" />
+                  <Text style={[styles.loadingText, isDark && styles.loadingTextDark]}>Loading payment methods...</Text>
+                </View>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={[styles.paymentMethodButton, isDark && styles.paymentMethodButtonDark]}
+                    onPress={() => setPaymentDropdownOpen(!paymentDropdownOpen)}
+                  >
+                    <Text style={[styles.paymentMethodButtonText, isDark && styles.paymentMethodButtonTextDark]}>
+                      {selectedPaymentId 
+                        ? (() => {
+                            const method = paymentMethods.find((m) => String(m.id) === selectedPaymentId);
+                            const label = method?.label ? (typeof method.label === 'string' ? method.label : String(method.label)) : "Select method...";
+                            return label;
+                          })()
+                        : "Select method..."
+                      }
+                    </Text>
+                    <Ionicons
+                      name={paymentDropdownOpen ? "chevron-up" : "chevron-down"}
+                      size={20}
+                      color={isDark ? "#9CA3AF" : "#6B7280"}
+                    />
+                  </TouchableOpacity>
+
+                  {paymentDropdownOpen && (
+                    <ScrollView style={[styles.paymentDropdownList, isDark && styles.paymentDropdownListDark]}>
+                      {(() => {
+                        // ✅ Use paymentMethods from state (already fetched fresh from cart/settings)
+                        // Do NOT call getOrderPaymentMethods here - it only returns order defaults
+                        
+                        return paymentMethods.map((method) => {
+                          const label = typeof method.label === 'string' ? method.label : String(method.label || 'Unknown');
+                          return (
+                            <TouchableOpacity
+                              key={method.id}
+                              style={[
+                                styles.paymentDropdownItem,
+                                isDark && styles.paymentDropdownItemDark,
+                                String(method.id) === selectedPaymentId && styles.paymentDropdownItemSelected,
+                              ]}
+                              onPress={() => {
+                                setSelectedPaymentId(String(method.id));
+                                setPaymentDropdownOpen(false);
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.paymentDropdownItemText,
+                                  isDark && styles.paymentDropdownItemTextDark,
+                                  String(method.id) === selectedPaymentId && styles.paymentDropdownItemTextSelected,
+                                ]}
+                              >
+                                {label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        });
+                      })()}
+
+                    </ScrollView>
+                  )}
+
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity
+                      style={[styles.modalCancelBtn, isDark && styles.modalCancelBtnDark]}
+                      onPress={() => setEditingItemKey(null)}
+                    >
+                      <Text style={[styles.modalCancelBtnText, isDark && styles.modalCancelBtnTextDark]}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.modalSaveBtn,
+                        isDark && styles.modalSaveBtnDark,
+                        !selectedPaymentId && styles.modalSaveBtnDisabled,
+                      ]}
+                      disabled={!selectedPaymentId}
+                      onPress={() => {
+                        if (selectedPaymentId && editingItemKey) {
+                          const [orderId, itemId] = editingItemKey.split('-').map(Number);
+                          handleUpdatePaymentMethod(orderId, itemId, selectedPaymentId);
+                        }
+                      }}
+                    >
+                      <Text style={styles.modalSaveBtnText}>Save</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Date Picker for From Date */}
+      {showFromDatePicker && (
+        <DateTimePicker
+          value={new Date(fromDate)}
+          mode="date"
+          display="spinner"
+          onChange={handleFromDateChange}
+        />
+      )}
+
+      {/* Date Picker for To Date */}
+      {showToDatePicker && (
+        <DateTimePicker
+          value={new Date(toDate)}
+          mode="date"
+          display="spinner"
+          onChange={handleToDateChange}
+        />
+      )}
+
+      <BottomNav />
     </View>
   );
 }
-
-/* ================================
-   STYLES
-=================================*/
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F4F5F7",
   },
+  containerDark: {
+    backgroundColor: "#020617",
+  },
 
   header: {
-    paddingTop: 60,
-    paddingBottom: 22,
-    paddingHorizontal: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingTop: 48,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
     backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
-    borderColor: "#E5E7EB",
+    borderBottomColor: "#E5E7EB",
   },
-  headerTitle: {
-    fontSize: 26,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  headerSubtitle: {
-    marginTop: 4,
-    fontSize: 14,
-    color: "#6B7280",
+  headerDark: {
+    backgroundColor: "#020617",
+    borderBottomColor: "#1F2937",
   },
 
-  wrapper: {
-    padding: 24,
-    paddingBottom: 150,
-  },
-
-  empty: {
-    textAlign: "center",
-    marginTop: 40,
-    fontSize: 15,
-    color: "#6B7280",
-  },
-
-  /* ORDER CARD */
-
-  orderCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginBottom: 16,
+  headerLeft: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
   },
 
-  orderId: {
-    fontSize: 17,
+  headerTitle: {
+    fontSize: 20,
     fontWeight: "700",
     color: "#111827",
   },
-
-  type: {
-    fontSize: 14,
-    color: "#6B7280",
-    marginTop: 4,
+  headerTitleDark: {
+    color: "#F9FAFB",
   },
 
-  time: {
-    marginTop: 6,
+  headerSubtitle: {
     fontSize: 12,
+    color: "#6B7280",
+    marginTop: 2,
+  },
+  headerSubtitleDark: {
     color: "#9CA3AF",
   },
 
-  payment: {
-    marginTop: 6,
-    fontSize: 13,
-    color: "#374151",
-    fontWeight: "500",
+  filterInput: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  filterInputDark: {
+    backgroundColor: "#111827",
+    borderColor: "#374151",
   },
 
-  total: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#111827",
-    alignSelf: "center",
-  },
-
-  /* MODAL */
-
-  modalBackdrop: {
+  filterTextInput: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-
-  modalBox: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 24,
-  },
-
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "700",
+    fontSize: 14,
     color: "#111827",
   },
-
-  modalSubtitle: {
-    marginTop: 4,
-    fontSize: 14,
-    color: "#6B7280",
-    marginBottom: 20,
+  filterTextInputDark: {
+    color: "#F3F4F6",
   },
 
-  methodBtn: {
-    paddingVertical: 14,
-    borderBottomWidth: 1,
+  filtersRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 8,
+  },
+
+  filterButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 6,
+    borderWidth: 1,
     borderColor: "#E5E7EB",
   },
 
-  methodText: {
-    fontSize: 16,
+  filterButtonActive: {
+    backgroundColor: "#EF4444",
+    borderColor: "#DC2626",
+  },
+
+  filterButtonText: {
+    fontSize: 12,
     fontWeight: "600",
+    color: "#6B7280",
+  },
+
+  filterButtonTextActive: {
+    color: "#FFFFFF",
+  },
+
+  dateFiltersRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 8,
+    backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+
+  dateFilterGroup: {
+    flex: 1,
+  },
+
+  dateLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#6B7280",
+    marginBottom: 3,
+  },
+  dateLabelDark: {
+    color: "#9CA3AF",
+  },
+
+  dateInput: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  dateInputDark: {
+    backgroundColor: "#111827",
+    borderColor: "#374151",
+  },
+
+  dateInputText: {
+    fontSize: 12,
+    color: "#111827",
+    fontWeight: "500",
+  },
+  dateInputTextDark: {
+    color: "#F3F4F6",
+  },
+
+  quickDateRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    justifyContent: "center",
+  },
+
+  quickDateBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: "#6366F1",
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#4F46E5",
+  },
+  quickDateBtnDark: {
+    backgroundColor: "#4F46E5",
+    borderColor: "#6366F1",
+  },
+
+  quickDateBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#FFFFFF",
+  },
+  quickDateBtnTextDark: {
+    color: "#F9FAFB",
+  },
+
+  centerContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  emptyText: {
+    fontSize: 16,
+    color: "#6B7280",
+  },
+  emptyTextDark: {
+    color: "#9CA3AF",
+  },
+
+  debugText: {
+    fontSize: 11,
+    color: "#DC2626",
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: "#FEE2E2",
+    borderRadius: 8,
+    maxWidth: "90%",
+  },
+  debugTextDark: {
+    color: "#FCA5A5",
+    backgroundColor: "#7F1D1D",
+  },
+
+  listContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingBottom: 160,
+  },
+
+  dateGroupContainer: {
+    marginBottom: 16,
+  },
+
+  dateGroupHeader: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#6B7280",
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  dateGroupHeaderDark: {
+    color: "#9CA3AF",
+  },
+
+  orderCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  orderCardDark: {
+    backgroundColor: "#111827",
+    borderColor: "#374151",
+  },
+
+  /* Modern card variants */
+  orderCardModern: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 4,
+    borderWidth: 0,
+  },
+  orderCardModernDark: {
+    backgroundColor: "#0B1020",
+  },
+
+  modernCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  modernHeaderLeft: {
+    flex: 1,
+  },
+  orderNumberModern: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  orderNumberModernDark: {
+    color: "#F8FAFC",
+  },
+  orderMetaModern: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 2,
+  },
+  orderMetaModernDark: {
+    color: "#9CA3AF",
+  },
+  modernHeaderRight: {
+    alignItems: "flex-end",
+    marginLeft: 12,
+  },
+  statusChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    marginBottom: 6,
+  },
+  statusChipText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 11,
+  },
+
+  totalAmountModern: {
+    fontSize: 14,
+    fontWeight: "800",
     color: "#111827",
   },
-
-  cancelBtn: {
-    marginTop: 20,
-    paddingVertical: 14,
-    borderRadius: 10,
-    backgroundColor: "#F3F4F6",
+  totalAmountModernDark: {
+    color: "#F3F4F6",
   },
 
-  cancelText: {
-    textAlign: "center",
-    fontSize: 15,
+  modernCardBody: {
+    marginTop: 2,
+    marginBottom: 8,
+  },
+  itemsListContainer: {
+    marginBottom: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+    paddingTop: 8,
+  },
+  itemRowWithEdit: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    backgroundColor: "#F9FAFB",
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  itemRowWithEditDark: {
+    backgroundColor: "#1F2937",
+  },
+  itemInfoSection: {
+    flex: 1,
+    flexDirection: "column",
+  },
+  itemPriceSmall: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginTop: 2,
+  },
+  itemPriceSmallDark: {
+    color: "#9CA3AF",
+  },
+  itemEditPaymentBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: "#EEF2FF",
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  itemEditPaymentBtnDark: {
+    backgroundColor: "#1E40AF",
+  },
+  itemEditPaymentBtnText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#4F46E5",
+  },
+  itemEditPaymentBtnTextDark: {
+    color: "#60A5FA",
+  },
+  itemsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  itemPill: {
+    backgroundColor: "#F3F4F6",
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 8,
+    marginBottom: 6,
+  },
+  itemPillText: {
+    fontSize: 12,
     color: "#374151",
   },
+  itemPillMore: {
+    backgroundColor: "#E6E9EF",
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginBottom: 6,
+  },
+  itemPillMoreText: {
+    fontSize: 12,
+    color: "#6B7280",
+  },
+
+  paymentsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 6,
+    flexWrap: "wrap",
+  },
+  paymentBadge: {
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  paymentBadgeText: {
+    fontSize: 12,
+    color: "#92400E",
+    fontWeight: "700",
+  },
+  paymentChangeLogContainer: {
+    backgroundColor: "#DDD6FE",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 2,
+    marginLeft: 0,
+    borderLeftWidth: 3,
+    borderLeftColor: "#6366F1",
+  },
+  paymentChangeLogContainerDark: {
+    backgroundColor: "#312E81",
+    borderLeftColor: "#818CF8",
+  },
+  paymentChangeLog: {
+    fontSize: 11,
+    color: "#4C1D95",
+    fontWeight: "600",
+  },
+  paymentChangeLogDark: {
+    color: "#A78BFA",
+  },
+
+  modernCardFooter: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+  },
+  iconEditBtn: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: "transparent",
+  },
+
+  orderHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 8,
+  },
+
+  orderHeaderLeft: {
+    flex: 1,
+  },
+
+  orderNumber: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  orderNumberDark: {
+    color: "#F3F4F6",
+  },
+
+  orderMeta: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginTop: 2,
+  },
+  orderMetaDark: {
+    color: "#9CA3AF",
+  },
+
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+
+  statusText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+
+  customerName: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#4F46E5",
+    marginBottom: 6,
+  },
+  customerNameDark: {
+    color: "#818CF8",
+  },
+
+  orderDetails: {
+    backgroundColor: "rgba(79,70,229,0.05)",
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 8,
+  },
+
+  detailLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#6B7280",
+    marginBottom: 4,
+  },
+  detailLabelDark: {
+    color: "#9CA3AF",
+  },
+
+  detailItem: {
+    fontSize: 11,
+    color: "#374151",
+    marginLeft: 6,
+    marginBottom: 2,
+  },
+  detailItemDark: {
+    color: "#D1D5DB",
+  },
+
+  orderFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+    paddingTop: 8,
+  },
+
+  totalLabel: {
+    fontSize: 10,
+    color: "#6B7280",
+    fontWeight: "600",
+  },
+  totalLabelDark: {
+    color: "#9CA3AF",
+  },
+
+  totalAmount: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111827",
+    marginTop: 2,
+  },
+  totalAmountDark: {
+    color: "#F3F4F6",
+  },
+
+  editButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#6366F1",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  editButtonDark: {
+    backgroundColor: "#4F46E5",
+  },
+
+  editButtonText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+
+  editPaymentSection: {
+    backgroundColor: "rgba(79,70,229,0.08)",
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+    marginTop: 8,
+    paddingTop: 8,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+  },
+  editPaymentSectionDark: {
+    backgroundColor: "rgba(79,70,229,0.15)",
+    borderTopColor: "#374151",
+  },
+
+  editLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 6,
+  },
+  editLabelDark: {
+    color: "#F3F4F6",
+  },
+
+  paymentMethodDropdown: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginBottom: 6,
+  },
+  paymentMethodDropdownDark: {
+    backgroundColor: "#111827",
+    borderColor: "#374151",
+  },
+
+  paymentMethodText: {
+    fontSize: 12,
+    color: "#111827",
+    fontWeight: "500",
+  },
+  paymentMethodTextDark: {
+    color: "#F3F4F6",
+  },
+
+  paymentDropdown: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginBottom: 6,
+    overflow: "hidden",
+    maxHeight: 150,
+  },
+  paymentDropdownDark: {
+    backgroundColor: "#1F2937",
+    borderColor: "#374151",
+  },
+
+  paymentOption: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+
+  paymentOptionSelected: {
+    backgroundColor: "#EEF2FF",
+  },
+
+  paymentOptionText: {
+    fontSize: 12,
+    color: "#374151",
+  },
+
+  paymentOptionTextSelected: {
+    color: "#6366F1",
+    fontWeight: "700",
+  },
+
+  editActionButtons: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 6,
+  },
+
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 6,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 6,
+    alignItems: "center",
+  },
+  cancelButtonDark: {
+    backgroundColor: "#374151",
+  },
+
+  cancelButtonText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#6B7280",
+  },
+  cancelButtonTextDark: {
+    color: "#D1D5DB",
+  },
+
+  saveButton: {
+    flex: 1,
+    paddingVertical: 6,
+    backgroundColor: "#6366F1",
+    borderRadius: 6,
+    alignItems: "center",
+  },
+  saveButtonDark: {
+    backgroundColor: "#4F46E5",
+  },
+
+  saveButtonDisabled: {
+    backgroundColor: "#D1D5DB",
+    opacity: 0.6,
+  },
+
+  saveButtonText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+
+  /* Modal Styles */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  modalContent: {
+    width: "85%",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  modalContentDark: {
+    backgroundColor: "#0B1020",
+  },
+
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  modalTitleDark: {
+    color: "#F9FAFB",
+  },
+
+  modalSubtitle: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginBottom: 16,
+  },
+  modalSubtitleDark: {
+    color: "#9CA3AF",
+  },
+
+  paymentMethodButton: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginBottom: 12,
+  },
+  paymentMethodButtonDark: {
+    backgroundColor: "#111827",
+    borderColor: "#374151",
+  },
+
+  paymentMethodButtonText: {
+    fontSize: 14,
+    color: "#111827",
+    fontWeight: "600",
+  },
+  paymentMethodButtonTextDark: {
+    color: "#F3F4F6",
+  },
+
+  paymentDropdownList: {
+    maxHeight: 200,
+    backgroundColor: "#F9FAFB",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+  paymentDropdownListDark: {
+    backgroundColor: "#1F2937",
+    borderColor: "#374151",
+  },
+
+  paymentDropdownItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+  paymentDropdownItemDark: {
+    borderBottomColor: "#374151",
+  },
+
+  paymentDropdownItemSelected: {
+    backgroundColor: "#EEF2FF",
+  },
+
+  paymentDropdownItemText: {
+    fontSize: 14,
+    color: "#374151",
+  },
+  paymentDropdownItemTextDark: {
+    color: "#D1D5DB",
+  },
+
+  paymentDropdownItemTextSelected: {
+    color: "#6366F1",
+    fontWeight: "700",
+  },
+
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  modalCancelBtnDark: {
+    backgroundColor: "#374151",
+  },
+
+  modalCancelBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#6B7280",
+  },
+  modalCancelBtnTextDark: {
+    color: "#D1D5DB",
+  },
+
+  modalSaveBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: "#6366F1",
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  modalSaveBtnDark: {
+    backgroundColor: "#4F46E5",
+  },
+
+  modalSaveBtnDisabled: {
+    backgroundColor: "#D1D5DB",
+    opacity: 0.5,
+  },
+
+  modalSaveBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+
+  /* LOADING STATE */
+  loadingPaymentMethods: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 20,
+    gap: 10,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: "#6B7280",
+  },
+  loadingTextDark: {
+    color: "#9CA3AF",
+  },
+
+  /* ORDER TIME TEXT */
+  orderTimeText: {
+    fontSize: 11,
+    color: "#9CA3AF",
+  },
+  orderTimeTextDark: {
+    color: "#6B7280",
+  },
 });
+
+
